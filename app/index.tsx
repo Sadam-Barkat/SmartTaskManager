@@ -19,7 +19,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 
-/* 🔔 Notification handler (mobile only) */
+/* Notification handler (safe) */
 if (Platform.OS !== "web") {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -35,7 +35,6 @@ type Task = {
   id: string;
   title: string;
   description: string;
-  priority: "High" | "Medium" | "Low";
   completed: boolean;
   reminderMinutes: number;
 };
@@ -44,103 +43,115 @@ export default function TasksScreen() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
 
-  // Form state
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [priority, setPriority] =
-    useState<"High" | "Medium" | "Low">("Medium");
   const [reminderMinutes, setReminderMinutes] = useState("5");
 
   useEffect(() => {
     if (Platform.OS !== "web") {
       Notifications.requestPermissionsAsync();
     }
-    fetchTasks();
+    loadTasks();
   }, []);
 
-  const fetchTasks = async () => {
-    const snapshot = await getDocs(collection(db, "tasks"));
-    const loadedTasks: Task[] = snapshot.docs.map((docSnap) => ({
-      id: docSnap.id,
-      ...(docSnap.data() as Omit<Task, "id">),
+  const loadTasks = async () => {
+    const snap = await getDocs(collection(db, "tasks"));
+    const data: Task[] = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<Task, "id">),
     }));
-    setTasks(loadedTasks.filter((t) => !t.completed));
+    setTasks(data.filter((t) => !t.completed));
   };
 
-  /* 🔔 Schedule reminder (TYPE-SAFE FIX) */
+  /* Reminder (non-blocking) */
   const scheduleReminder = async (minutes: number, title: string) => {
     if (Platform.OS === "web") return;
 
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "Task Reminder ⏰",
-        body: title,
-      },
-      trigger: {
-        seconds: minutes * 60,
-        repeats: false,
-      } as Notifications.TimeIntervalTriggerInput,
-    });
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Task Reminder ⏰",
+          body: title,
+        },
+        trigger: {
+          seconds: minutes * 60,
+        } as Notifications.TimeIntervalTriggerInput,
+      });
+    } catch {
+      // Do nothing — never break app
+    }
   };
 
+  /* ✅ FIXED SAVE LOGIC */
   const saveTask = async () => {
     if (!title.trim()) return;
 
-    await addDoc(collection(db, "tasks"), {
+    const newTask: Task = {
+      id: Date.now().toString(),
       title,
       description,
-      priority,
       completed: false,
       reminderMinutes: Number(reminderMinutes),
-    });
+    };
 
-    await scheduleReminder(Number(reminderMinutes), title);
+    // 1️⃣ Update UI immediately
+    setTasks((prev) => [newTask, ...prev]);
 
+    // 2️⃣ Close modal instantly
+    setModalVisible(false);
+
+    // 3️⃣ Reset form
     setTitle("");
     setDescription("");
-    setPriority("Medium");
     setReminderMinutes("5");
-    setModalVisible(false);
-    fetchTasks();
+
+    // 4️⃣ Save to Firebase (background)
+    addDoc(collection(db, "tasks"), {
+      title: newTask.title,
+      description: newTask.description,
+      completed: false,
+      reminderMinutes: newTask.reminderMinutes,
+    });
+
+    // 5️⃣ Schedule reminder (optional)
+    scheduleReminder(newTask.reminderMinutes, newTask.title);
   };
 
   const completeTask = async (id: string) => {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
     await updateDoc(doc(db, "tasks", id), { completed: true });
-    fetchTasks();
   };
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.headerBox}>
-        <Text style={styles.appName}>SmartTask</Text>
+      <View style={styles.header}>
+        <Text style={styles.logo}>SmartTask</Text>
         <Text style={styles.tagline}>Manage your tasks smartly</Text>
       </View>
 
-      {/* Task List */}
       <FlatList
         data={tasks}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: 180 }}
+        contentContainerStyle={{ paddingBottom: 220 }}
         renderItem={({ item }) => (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>{item.title}</Text>
             <Text style={styles.cardDesc}>{item.description}</Text>
             <Text style={styles.reminder}>
-              ⏰ Reminder in {item.reminderMinutes} minutes
+              ⏰ {item.reminderMinutes} min reminder
             </Text>
 
             <TouchableOpacity
               style={styles.doneBtn}
               onPress={() => completeTask(item.id)}
             >
-              <Text style={styles.doneText}>Mark as Done</Text>
+              <Text style={{ color: "#fff" }}>Done</Text>
             </TouchableOpacity>
           </View>
         )}
       />
 
-      {/* Floating Button */}
+      {/* FAB */}
       <TouchableOpacity
         style={styles.fab}
         onPress={() => setModalVisible(true)}
@@ -149,42 +160,35 @@ export default function TasksScreen() {
       </TouchableOpacity>
 
       {/* Modal */}
-      <Modal visible={modalVisible} animationType="slide" transparent>
+      <Modal visible={modalVisible} transparent animationType="slide">
         <View style={styles.modalBg}>
           <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Add New Task</Text>
+            <Text style={styles.modalTitle}>Add Task</Text>
 
-            <Text style={styles.label}>Task Title</Text>
+            <Text style={styles.label}>Title</Text>
+            <TextInput style={styles.input} value={title} onChangeText={setTitle} />
+
+            <Text style={styles.label}>Description</Text>
             <TextInput
-              placeholder="Enter task title"
-              value={title}
-              onChangeText={setTitle}
               style={styles.input}
-            />
-
-            <Text style={styles.label}>Task Description</Text>
-            <TextInput
-              placeholder="Enter task description"
               value={description}
               onChangeText={setDescription}
-              style={styles.input}
             />
 
-            <Text style={styles.label}>Reminder Time (minutes)</Text>
+            <Text style={styles.label}>Reminder (minutes)</Text>
             <TextInput
-              placeholder="e.g. 5"
-              value={reminderMinutes}
-              onChangeText={setReminderMinutes}
-              keyboardType="numeric"
               style={styles.input}
+              value={reminderMinutes}
+              keyboardType="numeric"
+              onChangeText={setReminderMinutes}
             />
 
             <TouchableOpacity style={styles.saveBtn} onPress={saveTask}>
-              <Text style={styles.saveText}>Save Task</Text>
+              <Text style={{ color: "#fff", fontWeight: "bold" }}>Save</Text>
             </TouchableOpacity>
 
             <TouchableOpacity onPress={() => setModalVisible(false)}>
-              <Text style={styles.cancelText}>Cancel</Text>
+              <Text style={styles.cancel}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -193,62 +197,40 @@ export default function TasksScreen() {
   );
 }
 
-/* 🎨 Styles */
+/* Styles */
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#eef2ff",
-    padding: 16,
-  },
-  headerBox: {
+  container: { flex: 1, backgroundColor: "#eef2ff", padding: 16 },
+  header: {
     backgroundColor: "#4f46e5",
     padding: 20,
     borderRadius: 16,
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 12,
   },
-  appName: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#fff",
-  },
-  tagline: {
-    fontSize: 13,
-    color: "#c7d2fe",
-  },
+  logo: { fontSize: 26, fontWeight: "bold", color: "#fff" },
+  tagline: { color: "#c7d2fe", fontSize: 13 },
+
   card: {
     backgroundColor: "#fff",
     padding: 16,
     borderRadius: 14,
     marginBottom: 12,
   },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  cardDesc: {
-    fontSize: 14,
-    marginVertical: 6,
-    color: "#374151",
-  },
-  reminder: {
-    fontSize: 12,
-    color: "#2563eb",
-    marginBottom: 6,
-  },
+  cardTitle: { fontSize: 18, fontWeight: "bold" },
+  cardDesc: { marginVertical: 6 },
+  reminder: { fontSize: 12, color: "#2563eb" },
+
   doneBtn: {
     backgroundColor: "#4f46e5",
     padding: 10,
     borderRadius: 8,
     alignItems: "center",
+    marginTop: 6,
   },
-  doneText: {
-    color: "#fff",
-    fontWeight: "bold",
-  },
+
   fab: {
     position: "absolute",
-    bottom: 130,
+    bottom: 160,
     right: 20,
     width: 64,
     height: 64,
@@ -256,12 +238,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#4f46e5",
     justifyContent: "center",
     alignItems: "center",
-    elevation: 8,
+    elevation: 10,
   },
-  fabText: {
-    fontSize: 32,
-    color: "#fff",
-  },
+  fabText: { color: "#fff", fontSize: 32 },
+
   modalBg: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -274,25 +254,15 @@ const styles = StyleSheet.create({
     width: "90%",
     borderRadius: 16,
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 12,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 4,
-    color: "#111827",
-  },
+  modalTitle: { fontSize: 20, fontWeight: "bold", marginBottom: 10 },
+
+  label: { fontWeight: "600", marginBottom: 4 },
   input: {
     borderWidth: 1,
     borderColor: "#d1d5db",
     borderRadius: 8,
     padding: 10,
     marginBottom: 10,
-    backgroundColor: "#f9fafb",
   },
   saveBtn: {
     backgroundColor: "#4f46e5",
@@ -300,14 +270,5 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
   },
-  saveText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
-  },
-  cancelText: {
-    textAlign: "center",
-    marginTop: 10,
-    color: "#6b7280",
-  },
+  cancel: { textAlign: "center", marginTop: 10, color: "#6b7280" },
 });

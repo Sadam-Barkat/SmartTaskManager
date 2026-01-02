@@ -1,40 +1,29 @@
 import { Tabs } from "expo-router";
+import { Platform } from "react-native";
 
 export default function Layout() {
   return (
     <Tabs
       screenOptions={{
-        /* Top header */
-        headerStyle: {
-          backgroundColor: "#f8fafc",
-          height: 70,
-        },
-        headerTitleStyle: {
-          fontSize: 18,
-          fontWeight: "700",
-          color: "#0f172a",
-        },
-        headerTitleAlign: "center",
-        headerShadowVisible: false,
+        headerShown: false,
 
-        /* 🔥 FIXED BOTTOM TAB BAR */
         tabBarStyle: {
-          backgroundColor: "#ffffff",
-          height: 80,              // 🔥 taller bar
-          paddingBottom: 20,       // 🔥 safe-area space
+          height: Platform.OS === "android" ? 90 : 70,
+          paddingBottom: Platform.OS === "android" ? 30 : 12,
           paddingTop: 10,
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
+          backgroundColor: "#ffffff",
+          borderTopLeftRadius: 18,
+          borderTopRightRadius: 18,
           position: "absolute",
-          elevation: 12,
+        },
+
+        tabBarLabelStyle: {
+          fontSize: 13,
+          fontWeight: "700",
         },
 
         tabBarActiveTintColor: "#4f46e5",
-        tabBarInactiveTintColor: "#94a3b8",
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "700",
-        },
+        tabBarInactiveTintColor: "#9ca3af",
       }}
     >
       <Tabs.Screen name="index" options={{ title: "Tasks" }} />
